@@ -1,39 +1,119 @@
-file(GLOB_RECURSE BX_SOURCES "*.cpp")
+file(
+	GLOB_RECURSE
+	BX_SOURCES
+	${BX_INCLUDE_DIR}/*.h #
+	${BX_INCLUDE_DIR}/**.inl #
+	*.cpp #
+	${BX_SCRIPTS_DIR}/*.natvis #
+)
+
+if(BX_AMALGAMATED)
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/allocator.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/bounds.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/bx.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/commandline.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/crtnone.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/debug.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/dtoa.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/easing.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/file.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/filepath.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/hash.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/math.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/mutex.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/os.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/process.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/semaphore.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/settings.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/sort.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/string.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/thread.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/timer.cpp")
+	list(APPEND BX_NOBUILD "${BX_DIR}/src/url.cpp")
+else()
+	file(GLOB_RECURSE BX_NOBUILD "${BX_DIR}/src/amalgamated.*")
+endif()
+
+# Exclude files from the build but keep them in project
+foreach(BX_SRC ${BX_NOBUILD})
+	set_source_files_properties(${BX_SRC} PROPERTIES HEADER_FILE_ONLY ON)
+endforeach()
 
 # Add library target
 add_library(bx ${BX_SOURCES})
 
-# Ensure MSVC uses the correct preprocessor and language standard
-if(MSVC)
-	target_compile_options(bx PRIVATE
-		/Zc:__cplusplus # Ensure _MSVC_LANG matches __cplusplus
-		/Zc:preprocessor # Use the standard conforming preprocessor
-	)
-endif()
+# Put in a "bgfx" folder in Visual Studio
+set_target_properties(bx PROPERTIES FOLDER "bgfx")
 
-# Define BX_CONFIG_DEBUG and other required macros
-target_compile_definitions(bx PRIVATE
-	$<$<CONFIG:Debug>:BX_CONFIG_DEBUG=1>
-	$<$<NOT:$<CONFIG:Debug>>:BX_CONFIG_DEBUG=0>
-	BX_CONFIG_CRT_FILE_READER_WRITER=1
-	BX_CONFIG_CRT_DIRECTORY_READER=1
-)
-
-# Platform-specific definitions
-if(WIN32)
-	target_compile_definitions(bx PRIVATE
-		BX_PLATFORM_WINDOWS=1
-		BX_CRT_MSVC=1
-	)
+# Build system specific configurations
+if(MINGW)
+	set(BX_COMPAT_PLATFORM mingw)
+elseif(WIN32)
+	set(BX_COMPAT_PLATFORM msvc)
+elseif(APPLE) # APPLE is technically UNIX... ORDERING MATTERS!
+	set(BX_COMPAT_PLATFORM osx)
 elseif(UNIX)
-	target_compile_definitions(bx PRIVATE
-		BX_PLATFORM_LINUX=1
-		BX_CRT_GLIBC=1
-	)
+	set(BX_COMPAT_PLATFORM linux)
 endif()
 
-# Include directories
-target_include_directories(bx PUBLIC
-	$<BUILD_INTERFACE:${BX_INCLUDE_DIR}>
-	$<INSTALL_INTERFACE:include>
+# Add include directory of bx
+target_include_directories(
+	bx
+	PUBLIC $<BUILD_INTERFACE:${BX_DIR}/include> #
+		   $<BUILD_INTERFACE:${BX_DIR}/3rdparty> #
+		   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}> #
+		   $<BUILD_INTERFACE:${BX_DIR}/include/compat/${BX_COMPAT_PLATFORM}> #
+		   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/bx/compat/${BX_COMPAT_PLATFORM}> #
 )
+# All configurations
+target_compile_definitions(bx PUBLIC "BX_CONFIG_DEBUG=$<IF:$<CONFIG:Debug>,1,$<BOOL:${BX_CONFIG_DEBUG}>>")
+target_compile_definitions(bx PUBLIC "__STDC_LIMIT_MACROS")
+target_compile_definitions(bx PUBLIC "__STDC_FORMAT_MACROS")
+target_compile_definitions(bx PUBLIC "__STDC_CONSTANT_MACROS")
+
+target_compile_features(bx PUBLIC cxx_std_14)
+# (note: see bx\scripts\toolchain.lua for equivalent compiler flag)
+target_compile_options(bx PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus /Zc:preprocessor>)
+
+# Link against psapi on Windows
+if(WIN32)
+	target_link_libraries(bx PUBLIC psapi)
+endif()
+
+# Additional dependencies on Unix
+if(ANDROID)
+	# For __android_log_write
+	find_library(LOG_LIBRARY log)
+	mark_as_advanced(LOG_LIBRARY)
+	target_link_libraries(bx PUBLIC ${LOG_LIBRARY})
+elseif(APPLE)
+	find_library(FOUNDATION_LIBRARY Foundation)
+	mark_as_advanced(FOUNDATION_LIBRARY)
+	target_link_libraries(bx PUBLIC ${FOUNDATION_LIBRARY})
+elseif(UNIX)
+	# Threads
+	find_package(Threads)
+	target_link_libraries(bx ${CMAKE_THREAD_LIBS_INIT} dl)
+
+	# Real time (for clock_gettime)
+	target_link_libraries(bx rt)
+endif()
+
+# Put in a "bgfx" folder in Visual Studio
+set_target_properties(bx PROPERTIES FOLDER "bgfx")
+
+if(BX_INSTALL)
+	install(
+		TARGETS bx
+		EXPORT "${TARGETS_EXPORT_NAME}"
+		LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+		ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+		RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+	)
+	# We will make sure tinystl and compat are not installed in /usr/include
+	install(DIRECTORY "${BX_DIR}/include/bx" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+	install(DIRECTORY "${BX_DIR}/include/compat/${BX_COMPAT_PLATFORM}"
+			DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/bx/compat"
+	)
+	install(DIRECTORY "${BX_DIR}/include/tinystl" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/bx")
+endif()
