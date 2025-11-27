@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Include the exported targets
+@PACKAGE_INCLUDE_DESTINATION@
+
+check_required_components(bx)
